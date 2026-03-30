@@ -47,7 +47,13 @@ RUN git clone --depth 1 -b "$REPO_BRANCH" "$REPO_URL" .
 
 # use the base config from repository context
 COPY configs/base-AX5-25.12.config .config
-RUN make defconfig && make clean
+COPY feeds/custom_feeds.conf custom_feeds.conf
+RUN cat custom_feeds.conf >> feeds.conf.default && rm custom_feeds.conf
+RUN ./scripts/feeds update -a && ./scripts/feeds install -a
+RUN make defconfig
+RUN make -j $(nproc) download
+RUN make -j $(nproc)
+RUN make clean
 
 ENV OPENWRT_PATH=/openwrt
 WORKDIR /openwrt

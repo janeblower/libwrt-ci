@@ -9,7 +9,7 @@ env:
   REPO_URL: https://github.com/LiBwrt/openwrt-6.x.git
   REPO_BRANCH: 25.12-nss
   CONFIG_FILE: configs/AX5-25.12-WiFi.config
-  AWG_FEED: feeds/awg.txt
+  CUSTOM_FEEDS: feeds/custom_feeds.conf
   DIY_SCRIPT: libwrt.sh
   CLASH_KERNEL: amd64
   CACHE_TOOLCHAIN: true
@@ -92,13 +92,6 @@ jobs:
         mixkey: ${{ env.SOURCE_REPO }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}
         prefix: ${{ env.OPENWRT_PATH }}
     
-    - name: Install Feeds
-      run: |
-        cd $OPENWRT_PATH
-        cat $GITHUB_WORKSPACE/$AWG_FEED >> feeds.conf.default
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
-  
     - name: Load Custom Configuration
       run: |
         [ -e files ] && mv files $OPENWRT_PATH/files

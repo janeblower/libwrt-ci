@@ -28,16 +28,18 @@ RUN apt-get update && \
 
 RUN useradd -m openwrt 
 
-USER openwrt
 WORKDIR /home/openwrt
+RUN mkdir -p libwrt-25.12
 
 RUN git clone --depth 1 -b $REPO_BRANCH $REPO_URL ./libwrt-25.12
+
 WORKDIR /home/openwrt/libwrt-25.12
 
-# use the base config from repository context
-COPY configs/base-AX5-25.12.config .config
-COPY feeds/custom_feeds.conf custom_feeds.conf
-RUN chown openwrt:openwrt .config custom_feeds.conf
+COPY --chown=openwrt:openwrt configs/base-AX5-25.12.config .config
+COPY --chown=openwrt:openwrt feeds/custom_feeds.conf custom_feeds.conf
+
+USER openwrt
+
 RUN cat custom_feeds.conf >> feeds.conf.default && rm custom_feeds.conf
 RUN ./scripts/feeds update -a && ./scripts/feeds install -a
 RUN make defconfig

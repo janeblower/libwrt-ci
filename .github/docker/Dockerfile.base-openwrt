@@ -8,6 +8,7 @@ ARG REPO_BRANCH=25.12-nss
 ARG BASE_CONFIG=configs/base-AX5-25.12.config
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/Moscow
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -39,7 +40,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     wget \
     rsync \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* && \
+    bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)' && \
+    apt -yqq install dos2unix && \
+    apt -yqq install libfuse-dev && \
+    apt -yqq autoremove --purge && \
+    apt -yqq autoclean && \
+    apt -yqq clean && \
+    systemctl daemon-reload && \
+    timedatectl set-timezone "$TZ"
 
 WORKDIR /openwrt
 

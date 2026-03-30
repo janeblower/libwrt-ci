@@ -26,13 +26,13 @@ RUN apt-get update && \
     apt-get autoclean -yqq && \
     apt-get clean 
 
-RUN useradd -m openwrt && \
-    echo 'openwrt ALL=NOPASSWD: ALL' > /etc/sudoers.d/openwrt
+RUN useradd -m openwrt 
 
 USER openwrt
 WORKDIR /home/openwrt
 
-RUN git clone --depth 1 -b $REPO_BRANCH $REPO_URL .
+RUN git clone --depth 1 -b $REPO_BRANCH $REPO_URL ./libwrt-25.12
+WORKDIR /home/openwrt/libwrt-25.12
 
 # use the base config from repository context
 COPY configs/base-AX5-25.12.config .config
@@ -44,5 +44,5 @@ RUN make -j$(nproc) download V=s
 RUN make -j$(nproc) V=s
 RUN make clean
 
-ENV OPENWRT_PATH=/home/openwrt
-WORKDIR /home/openwrt
+ENV OPENWRT_PATH=/home/openwrt/libwrt-25.12
+WORKDIR /home/openwrt/libwrt-25.12

@@ -1,0 +1,53 @@
+# Base OpenWrt container image for libwrt-ci
+# Preload OpenWrt source (25.12-nss) with base config and clean workspace.
+
+FROM ubuntu:22.04
+
+ARG REPO_URL=https://github.com/LiBwrt/openwrt-6.x.git
+ARG REPO_BRANCH=25.12-nss
+ARG BASE_CONFIG=configs/base-AX5-25.12.config
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    build-essential \
+    ccache \
+    libncurses5-dev \
+    gawk \
+    gettext \
+    libssl-dev \
+    python3 \
+    python3-distutils \
+    unzip \
+    file \
+    time \
+    subversion \
+    libexpat-dev \
+    bzip2 \
+    automake \
+    libtool \
+    autopoint \
+    asciidoc \
+    graphviz \
+    xsltproc \
+    docbook-utils \
+    libxml-parser-perl \
+    dpkg-dev \
+    g++ \
+    wget \
+    rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /openwrt
+
+RUN git clone --depth 1 -b "$REPO_BRANCH" "$REPO_URL" .
+
+# use the base config from repository context
+COPY configs/base-AX5-25.12.config .config
+RUN make defconfig && make clean
+
+ENV OPENWRT_PATH=/openwrt
+WORKDIR /openwrt

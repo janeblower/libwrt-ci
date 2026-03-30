@@ -21,6 +21,11 @@ env:
 jobs:
   Build:
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
     - name: Check Server Performance
@@ -60,12 +65,10 @@ jobs:
     - name: Checkout
       uses: actions/checkout@main
 
-    - name: Clone Source Code
+    - name: Use prebuilt OpenWrt image source
       run: |
-        df -hT $GITHUB_WORKSPACE
-        git clone --depth 1 -b $REPO_BRANCH $REPO_URL openwrt
-        cd openwrt
-        echo "OPENWRT_PATH=$PWD" >> $GITHUB_ENV
+        echo "OPENWRT_PATH=/openwrt" >> $GITHUB_ENV
+        cd /openwrt
         VERSION_INFO=$(git show -s --date=short --format="Author: %an<br/>Time: %cd<br/>Content: %s<br/>hash: %H")
         echo "VERSION_INFO=$VERSION_INFO" >> $GITHUB_ENV
 

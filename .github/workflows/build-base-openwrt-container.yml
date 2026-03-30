@@ -1,0 +1,40 @@
+name: Build Base OpenWrt Container
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *' # optional, ежедневно утром UTC
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for cross-platform container build support)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push base image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: .github/docker/Dockerfile.base-openwrt
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

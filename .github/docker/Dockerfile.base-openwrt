@@ -26,7 +26,11 @@ RUN apt-get update && \
     apt-get autoclean -yqq && \
     apt-get clean 
 
-WORKDIR /openwrt
+RUN useradd -m openwrt && \
+    echo 'openwrt ALL=NOPASSWD: ALL' > /etc/sudoers.d/openwrt
+
+USER openwrt
+WORKDIR /home/openwrt
 
 RUN git clone --depth 1 -b $REPO_BRANCH $REPO_URL .
 
@@ -40,5 +44,5 @@ RUN make -j$(nproc) download V=s
 RUN make -j$(nproc) V=s
 RUN make clean
 
-ENV OPENWRT_PATH=/openwrt
-WORKDIR /openwrt
+ENV OPENWRT_PATH=/home/openwrt
+WORKDIR /home/openwrt

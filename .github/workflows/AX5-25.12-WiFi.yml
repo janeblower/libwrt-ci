@@ -55,6 +55,12 @@ jobs:
     - name: Checkout
       uses: actions/checkout@main
 
+    - name: Configure Docker Data Root
+      run: |
+        sudo mkdir -p /home/runner/work/docker-data
+        echo '{"data-root": "/home/runner/work/docker-data"}' | sudo tee /etc/docker/daemon.json
+        sudo systemctl restart docker
+
     - name: Prepare Build Environment in Container
       run: |
         docker run --rm -v $(pwd):/workspace -e CONFIG_FILE="$CONFIG_FILE" -e REPO_URL="$REPO_URL" ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12 /bin/bash -c "

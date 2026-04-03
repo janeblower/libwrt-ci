@@ -39,6 +39,12 @@ jobs:
       - name: Set timezone
         run: sudo timedatectl set-timezone "${{ env.TZ }}"
 
+      - name: Configure Docker Data Root
+        run: |
+          sudo mkdir -p /home/runner/work/libwrt-ci/libwrt-ci/docker-data
+          echo '{"data-root": "/home/runner/work/libwrt-ci/libwrt-ci/docker-data"}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
       - name: Build OpenWrt in Docker
         id: docker_build
         run: |

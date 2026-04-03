@@ -3,167 +3,154 @@ name: AX5-25.12-WiFi
 on:
   workflow_dispatch:
   schedule:
-    - cron: 0 19 * * *
+    - cron: '0 19 * * *'   # каждый день в 19:00 UTC
 
 env:
   REPO_URL: https://github.com/LiBwrt/openwrt-6.x.git
   CONFIG_FILE: configs/AX5-25.12-WiFi.config
-  DIY_SCRIPT: libwrt.sh
-  UPLOAD_BIN_DIR: false
-  FIRMWARE_RELEASE: true
   FIRMWARE_TAG: AX5-25.12-WiFi
   TZ: Europe/Moscow
+  BUILD_DIR: /workspace   # внутри контейнера
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   Build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Check Server Performance
-      run: |
-        echo "Warning ⚠"
-        echo "The allocated server performance is limited. If you select too many plugins, be sure to pay attention to CPU performance!"
-        echo -e "Known CPU models (descending): 7763, 8370C, 8272CL, 8171M, E5-2673 \n"
-        echo "--------------------------CPU Information--------------------------"
-        echo "CPU Physical Count: $(cat /proc/cpuinfo | grep "physical id" | sort | uniq | wc -l)"
-        echo -e "CPU Core Information: $(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
-        echo "--------------------------Memory Information--------------------------"
-        echo "Installed Memory Details:"
-        echo -e "$(sudo lshw -short -C memory | grep GiB) \n"
-        echo "--------------------------Disk Information--------------------------"
-        echo "Disk Count: $(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 2048        # увеличил на всякий случай
+          temp-reserve-mb: 100
+          root-reserve-mb: 2048
 
-    - name: Initialization Environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo -E apt -yqq install dos2unix
-        sudo -E apt -yqq install libfuse-dev
-        sudo -E apt -yqq autoremove --purge
-        sudo -E apt -yqq autoclean
-        sudo -E apt -yqq clean
-        sudo -E systemctl daemon-reload
-        sudo timedatectl set-timezone "$TZ"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-    - name: Combine Disks
-      uses: easimon/maximize-build-space@master
-      with:
-        swap-size-mb: 1024
-        temp-reserve-mb: 100
-        root-reserve-mb: 1024
+      - name: Set timezone
+        run: sudo timedatectl set-timezone "${{ env.TZ }}"
 
-    - name: Checkout
-      uses: actions/checkout@main
+      - name: Prepare environment
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -yqq dos2unix
 
-    - name: Configure Docker Data Root
-      run: |
-        sudo mkdir -p /home/runner/work/libwrt-ci/libwrt-ci/docker-data
-        echo '{"data-root": "/home/runner/work/libwrt-ci/libwrt-ci/docker-data"}' | sudo tee /etc/docker/daemon.json
-        sudo systemctl restart docker
+      - name: Build OpenWrt in Docker
+        id: docker_build
+        run: |
+          docker run --rm \
+            -v "$(pwd):${{ env.BUILD_DIR }}" \
+            -e CONFIG_FILE="${{ env.CONFIG_FILE }}" \
+            -e REPO_URL="${{ env.REPO_URL }}" \
+            ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12 \
+            /bin/bash -c '
+              set -euo pipefail
 
-    - name: Prepare Build Environment in Container
-      run: |
-        docker run --rm -v $(pwd):/workspace -e CONFIG_FILE="$CONFIG_FILE" -e REPO_URL="$REPO_URL" ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12 /bin/bash -c "
-        set -e
-        VERSION_INFO=\$(git show -s --date=short --format='Author: %an<br/>Time: %cd<br/>Content: %s<br/>hash: %H')
-        echo \"VERSION_INFO=\$VERSION_INFO\" >> /workspace/env_file
-        cp /workspace/\$CONFIG_FILE .config
-        make defconfig > /dev/null 2>&1
-        SOURCE_REPO=\"\$(echo \$REPO_URL | awk -F '/' '{print \$(NF)}')\"
-        echo \"SOURCE_REPO=\$SOURCE_REPO\" >> /workspace/env_file
-        DEVICE_TARGET=\$(cat .config | grep CONFIG_TARGET_BOARD | awk -F '\"' '{print \$2}')
-        echo \"DEVICE_TARGET=\$DEVICE_TARGET\" >> /workspace/env_file
-        DEVICE_SUBTARGET=\$(cat .config | grep CONFIG_TARGET_SUBTARGET | awk -F '\"' '{print \$2}')
-        echo \"DEVICE_SUBTARGET=\$DEVICE_SUBTARGET\" >> /workspace/env_file
-        "
+              echo "=== Starting OpenWrt build ==="
 
-    - name: Load Configuration and Download Packages in Container
-      run: |
-        docker run --rm -v $(pwd):/workspace -e CONFIG_FILE="$CONFIG_FILE" -e DIY_SCRIPT="$DIY_SCRIPT" ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12 /bin/bash -c "
-        set -e
-        [ -e /workspace/files ] && mv /workspace/files files
-        [ -e /workspace/\$CONFIG_FILE ] && mv /workspace/\$CONFIG_FILE .config
-        chmod +x /workspace/\$DIY_SCRIPT
-        /workspace/\$DIY_SCRIPT
-        make defconfig
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
-        "
+              if [ -f "${{ env.BUILD_DIR }}/${{ env.CONFIG_FILE }}" ]; then
+                cp "${{ env.BUILD_DIR }}/${{ env.CONFIG_FILE }}" .config
+                echo "Config copied from ${{ env.CONFIG_FILE }}"
+              fi
 
-    - name: Compile Firmware and Organize Output in Container
-      run: |
-        docker run --rm -v $(pwd):/workspace ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12 /bin/bash -c "
-        set -e
-        echo -e \"\$(nproc) thread compile\"
-        make -j\$(nproc) || make -j1 || make -j1 V=s
-        echo \"compile_success\" >> /workspace/compile_status
-        echo \"DATE=\$(date +'%Y-%m-%d %H:%M:%S')\" >> /workspace/env_file
-        echo \"FILE_DATE=\$(date +'%Y.%m.%d')\" >> /workspace/env_file
-        cd bin/targets/*/*
-        cat sha256sums
-        VERSION_KERNEL=\$(find -type f -name \"*.manifest\" -exec grep -oP '^kernel - \K.*?(?=~|-\d+-)' {} \;)
-        echo \"VERSION_KERNEL=\$VERSION_KERNEL\" >> /workspace/env_file
-        cp .config build.config
-        mv -f bin/packages/*/*/*.apk packages 2>/dev/null || true
-        tar -zcf Packages.tar.gz packages 2>/dev/null || true
-        rm -rf packages feeds.buildinfo version.buildinfo 2>/dev/null || true
-        mkdir -p /workspace/bin
-        cp -r bin/* /workspace/bin/
-        cd /workspace/bin/targets/*/*
-        echo \"FIRMWARE_PATH=\$(pwd)\" >> /workspace/env_file
-        "
+              make defconfig
+              make download -j8
 
-    - name: Set Environment Variables
-      run: |
-        cat env_file >> $GITHUB_ENV
+              echo "=== Starting compilation (this may take a long time) ==="
+              make -j$(nproc) || make -j1 || make -j1 V=s
 
-    - name: Set Compile Status
-      id: compile
-      run: |
-        if [ -f compile_status ]; then
-          echo "status=success" >> $GITHUB_OUTPUT
-        else
-          echo "status=failure" >> $GITHUB_OUTPUT
-        fi
+              echo "=== Build completed successfully ==="
 
-    - name: Check Space Usage
-      if: (!cancelled())
-      run: df -hT
+              VERSION_INFO=$(git show -s --date=short --format="Author: %an<br/>Time: %cd<br/>Content: %s<br/>Hash: %H")
+              echo "VERSION_INFO=$VERSION_INFO" >> ${{ env.BUILD_DIR }}/env_file
 
-    - name: Upload Bin Directory
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      uses: actions/upload-artifact@main
-      with:
-        name: ${{ env.SOURCE_REPO }}-bin-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}-${{ env.FILE_DATE }}
-        path: bin
+              echo "DATE=$(date +"%Y-%m-%d %H:%M:%S")" >> ${{ env.BUILD_DIR }}/env_file
+              echo "FILE_DATE=$(date +"%Y.%m.%d")" >> ${{ env.BUILD_DIR }}/env_file
 
-    - name: Upload Firmware To Artifact
-      if: steps.compile.outputs.status == 'success' && env.FIRMWARE_RELEASE != 'true'
-      uses: actions/upload-artifact@main
-      with:
-        name: ${{ env.SOURCE_REPO }}-firmware-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}-${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE_PATH }}
+              cd bin/targets/*/*
+              KERNEL_VER=$(find -type f -name "*.manifest" -exec grep -oP "^kernel - \K.*?(?=~|-\d+-)" {} \; || echo "unknown")
+              echo "VERSION_KERNEL=$KERNEL_VER" >> ${{ env.BUILD_DIR }}/env_file
 
-    - name: Upload Firmware To Release
-      if: steps.compile.outputs.status == 'success' && env.FIRMWARE_RELEASE == 'true'
-      uses: ncipollo/release-action@v1
-      with:
-        name: R${{ env.DATE }} for ${{ env.FIRMWARE_TAG }}
-        allowUpdates: true
-        tag: ${{ env.FIRMWARE_TAG }}
-        token: ${{ secrets.GITHUB_TOKEN }}
-        artifacts: ${{ env.FIRMWARE_PATH }}/*
-        body: |
-          **This is OpenWrt Firmware for ${{ env.FIRMWARE_TAG }}**
-          ### 📒 Firmware Information (WIFI)
-          - WIFI-enabled firmware with wired NSS on 6.12 kernel
-          - 💻 This is the OpenWrt firmware used for the ${{ env.FIRMWARE_TAG }} platform
-          - ⚽ Firmware source: ${{ env.REPO_URL }}
-          - 💝 Source branch: ${{ env.REPO_BRANCH }}
-          - 🌐 Default address: 192.168.1.1
-          - 🔑 Default password: password
-          ### 🧊 Firmware Version
-          - Firmware kernel version: ${{ env.VERSION_KERNEL }}
-          - Last update record of [main source](${{ env.REPO_URL }}) before firmware compilation
-          - ${{ env.VERSION_INFO }}
+              mkdir -p ${{ env.BUILD_DIR }}/firmware
+              cp -r bin/* ${{ env.BUILD_DIR }}/firmware/
+
+              cp .config ${{ env.BUILD_DIR }}/firmware/build.config 2>/dev/null || true
+
+              echo "FIRMWARE_PATH=${{ env.BUILD_DIR }}/firmware" >> ${{ env.BUILD_DIR }}/env_file
+              echo "compile_success" > ${{ env.BUILD_DIR }}/compile_status
+
+              echo "Build artifacts copied to ${{ env.BUILD_DIR }}/firmware"
+            '
+
+      - name: Load environment variables
+        if: always()
+        run: |
+          if [ -f env_file ]; then
+            cat env_file >> $GITHUB_ENV
+            echo "Environment variables loaded:"
+            cat env_file
+          else
+            echo "env_file not found!"
+          fi
+
+      - name: Check compile status
+        id: compile
+        run: |
+          if [ -f compile_status ] && grep -q "compile_success" compile_status; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "✅ Compilation completed successfully"
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "❌ Compilation failed"
+            exit 1
+          fi
+
+      - name: Upload firmware as artifact (for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ env.FIRMWARE_TAG }}-${{ env.FILE_DATE || 'failed' }}
+          path: firmware/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Check disk usage
+        if: always()
+        run: df -hT
+
+      - name: Create/Update GitHub Release
+        if: steps.compile.outputs.status == 'success'
+        uses: ncipollo/release-action@v1
+        with:
+          name: R${{ env.DATE || env.FILE_DATE }} — ${{ env.FIRMWARE_TAG }}
+          allowUpdates: true
+          tag: ${{ env.FIRMWARE_TAG }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: firmware/*
+          replacesArtifacts: true
+          body: |
+            **OpenWrt Firmware for ${{ env.FIRMWARE_TAG }}**
+
+            ### 📒 Firmware Information
+            - WIFI-enabled firmware with wired NSS
+            - Kernel: **${{ env.VERSION_KERNEL || 'unknown' }}**
+            - Platform: ${{ env.FIRMWARE_TAG }}
+            - Source: [${{ env.REPO_URL }}](${{ env.REPO_URL }})
+            - Default IP: `192.168.1.1`
+            - Default password: `password`
+
+            ### 🧊 Build Details
+            - Build date: ${{ env.DATE || 'unknown' }}
+            - Last commit:
+              ${{ env.VERSION_INFO || 'unknown' }}
+
+            **Files are attached below.**

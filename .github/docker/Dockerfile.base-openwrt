@@ -42,10 +42,12 @@ COPY --chown=${USERNAME}:${USERNAME} feeds/custom_feeds.conf custom_feeds.conf
 
 RUN cat custom_feeds.conf >> feeds.conf.default && rm -f custom_feeds.conf && \
     ./scripts/feeds update -a && ./scripts/feeds install -a 
-RUN make defconfig 
-RUN make -j$(nproc) download
-RUN make -j$(nproc)
-RUN make clean
+RUN make defconfig && \
+    make -j$(nproc) download && \
+    find dl -size -1024c -exec rm -f {} +
+
+RUN make -j$(nproc) && \
+    make clean
 
 ENV OPENWRT_PATH=/home/openwrt/libwrt-25.12
 WORKDIR /home/openwrt/libwrt-25.12

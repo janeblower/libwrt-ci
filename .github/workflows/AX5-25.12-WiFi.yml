@@ -27,9 +27,9 @@ jobs:
       - name: Maximize build space
         uses: easimon/maximize-build-space@master
         with:
-          swap-size-mb: 2048        # увеличил на всякий случай
+          swap-size-mb: 1024        
           temp-reserve-mb: 100
-          root-reserve-mb: 2048
+          root-reserve-mb: 1024
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,11 +38,6 @@ jobs:
 
       - name: Set timezone
         run: sudo timedatectl set-timezone "${{ env.TZ }}"
-
-      - name: Prepare environment
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -yqq dos2unix
 
       - name: Build OpenWrt in Docker
         id: docker_build

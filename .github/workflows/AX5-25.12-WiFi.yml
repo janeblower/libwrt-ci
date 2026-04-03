@@ -7,12 +7,8 @@ on:
 
 env:
   REPO_URL: https://github.com/LiBwrt/openwrt-6.x.git
-  REPO_BRANCH: 25.12-nss
   CONFIG_FILE: configs/AX5-25.12-WiFi.config
-  CUSTOM_FEEDS: feeds/custom_feeds.conf
   DIY_SCRIPT: libwrt.sh
-  CLASH_KERNEL: amd64
-  CACHE_TOOLCHAIN: true
   UPLOAD_BIN_DIR: false
   FIRMWARE_RELEASE: true
   FIRMWARE_TAG: AX5-25.12-WiFi
@@ -21,11 +17,6 @@ env:
 jobs:
   Build:
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
     - name: Check Server Performance
@@ -64,58 +55,74 @@ jobs:
     - name: Checkout
       uses: actions/checkout@main
 
-    - name: Use prebuilt OpenWrt image source
+    - name: Prepare Build Environment in Container
       run: |
-        echo "OPENWRT_PATH=/openwrt" >> $GITHUB_ENV
+        docker run --rm -v $(pwd):/workspace -e CONFIG_FILE="$CONFIG_FILE" -e REPO_URL="$REPO_URL" ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12 /bin/bash -c "
+        set -e
         cd /openwrt
-        VERSION_INFO=$(git show -s --date=short --format="Author: %an<br/>Time: %cd<br/>Content: %s<br/>hash: %H")
-        echo "VERSION_INFO=$VERSION_INFO" >> $GITHUB_ENV
-
-    - name: Generate Variables
-      run: |
-        cp $CONFIG_FILE $OPENWRT_PATH/.config
-        cd $OPENWRT_PATH
+        VERSION_INFO=\$(git show -s --date=short --format='Author: %an<br/>Time: %cd<br/>Content: %s<br/>hash: %H')
+        echo \"VERSION_INFO=\$VERSION_INFO\" >> /workspace/env_file
+        cp /workspace/\$CONFIG_FILE /openwrt/.config
         make defconfig > /dev/null 2>&1
-        SOURCE_REPO="$(echo $REPO_URL | awk -F '/' '{print $(NF)}')"
-        echo "SOURCE_REPO=$SOURCE_REPO" >> $GITHUB_ENV
-        DEVICE_TARGET=$(cat .config | grep CONFIG_TARGET_BOARD | awk -F '"' '{print $2}')
-        echo "DEVICE_TARGET=$DEVICE_TARGET" >> $GITHUB_ENV
-        DEVICE_SUBTARGET=$(cat .config | grep CONFIG_TARGET_SUBTARGET | awk -F '"' '{print $2}')
-        echo "DEVICE_SUBTARGET=$DEVICE_SUBTARGET" >> $GITHUB_ENV
+        SOURCE_REPO=\"\$(echo \$REPO_URL | awk -F '/' '{print \$(NF)}')\"
+        echo \"SOURCE_REPO=\$SOURCE_REPO\" >> /workspace/env_file
+        DEVICE_TARGET=\$(cat .config | grep CONFIG_TARGET_BOARD | awk -F '\"' '{print \$2}')
+        echo \"DEVICE_TARGET=\$DEVICE_TARGET\" >> /workspace/env_file
+        DEVICE_SUBTARGET=\$(cat .config | grep CONFIG_TARGET_SUBTARGET | awk -F '\"' '{print \$2}')
+        echo \"DEVICE_SUBTARGET=\$DEVICE_SUBTARGET\" >> /workspace/env_file
+        "
 
-    - name: Cache Toolchain
-      if: env.CACHE_TOOLCHAIN == 'true'
-      uses: HiGarfield/cachewrtbuild@main
-      with:
-        ccache: false
-        mixkey: ${{ env.SOURCE_REPO }}-${{ env.REPO_BRANCH }}-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}
-        prefix: ${{ env.OPENWRT_PATH }}
-    
-    - name: Load Custom Configuration
+    - name: Load Configuration and Download Packages in Container
       run: |
-        [ -e files ] && mv files $OPENWRT_PATH/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE $OPENWRT_PATH/.config
-        chmod +x $DIY_SCRIPT
-        cd $OPENWRT_PATH
-        $GITHUB_WORKSPACE/$DIY_SCRIPT
-
-    - name: Download DL Package
-      run: |
-        cd $OPENWRT_PATH
+        docker run --rm -v $(pwd):/workspace -e CONFIG_FILE="$CONFIG_FILE" -e DIY_SCRIPT="$DIY_SCRIPT" ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12 /bin/bash -c "
+        set -e
+        cd /openwrt
+        [ -e /workspace/files ] && mv /workspace/files /openwrt/files
+        [ -e /workspace/\$CONFIG_FILE ] && mv /workspace/\$CONFIG_FILE /openwrt/.config
+        chmod +x /workspace/\$DIY_SCRIPT
+        /workspace/\$DIY_SCRIPT
         make defconfig
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
+        "
 
-    - name: Compile Firmware
+    - name: Compile Firmware and Organize Output in Container
+      run: |
+        docker run --rm -v $(pwd):/workspace ghcr.io/${{ github.repository_owner }}/libwrt-ci-base:25.12 /bin/bash -c "
+        set -e
+        cd /openwrt
+        echo -e \"\$(nproc) thread compile\"
+        make -j\$(nproc) || make -j1 || make -j1 V=s
+        echo \"compile_success\" >> /workspace/compile_status
+        echo \"DATE=\$(date +'%Y-%m-%d %H:%M:%S')\" >> /workspace/env_file
+        echo \"FILE_DATE=\$(date +'%Y.%m.%d')\" >> /workspace/env_file
+        cd /openwrt/bin/targets/*/*
+        cat sha256sums
+        VERSION_KERNEL=\$(find -type f -name \"*.manifest\" -exec grep -oP '^kernel - \K.*?(?=~|-\d+-)' {} \;)
+        echo \"VERSION_KERNEL=\$VERSION_KERNEL\" >> /workspace/env_file
+        cp /openwrt/.config build.config
+        mv -f /openwrt/bin/packages/*/*/*.apk packages 2>/dev/null || true
+        tar -zcf Packages.tar.gz packages 2>/dev/null || true
+        rm -rf packages feeds.buildinfo version.buildinfo 2>/dev/null || true
+        mkdir -p /workspace/bin
+        cp -r /openwrt/bin/* /workspace/bin/
+        cd /workspace/bin/targets/*/*
+        echo \"FIRMWARE_PATH=\$(pwd)\" >> /workspace/env_file
+        "
+
+    - name: Set Environment Variables
+      run: |
+        cat env_file >> $GITHUB_ENV
+
+    - name: Set Compile Status
       id: compile
       run: |
-        cd $OPENWRT_PATH
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        echo "DATE=$(date +"%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
-        echo "FILE_DATE=$(date +"%Y.%m.%d")" >> $GITHUB_ENV
+        if [ -f compile_status ]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+        else
+          echo "status=failure" >> $GITHUB_OUTPUT
+        fi
 
     - name: Check Space Usage
       if: (!cancelled())
@@ -126,19 +133,7 @@ jobs:
       uses: actions/upload-artifact@main
       with:
         name: ${{ env.SOURCE_REPO }}-bin-${{ env.DEVICE_TARGET }}-${{ env.DEVICE_SUBTARGET }}-${{ env.FILE_DATE }}
-        path: ${{ env.OPENWRT_PATH }}/bin
-
-    - name: Organize Files
-      if: steps.compile.outputs.status == 'success'
-      run: |
-        cd $OPENWRT_PATH/bin/targets/*/*
-        cat sha256sums
-        echo "VERSION_KERNEL=$(find -type f -name "*.manifest" -exec grep -oP '^kernel - \K.*?(?=~|-\d+-)' {} \;)" >> $GITHUB_ENV
-        cp $OPENWRT_PATH/.config build.config
-        mv -f $OPENWRT_PATH/bin/packages/*/*/*.apk packages
-        tar -zcf Packages.tar.gz packages
-        rm -rf packages feeds.buildinfo version.buildinfo
-        echo "FIRMWARE_PATH=$PWD" >> $GITHUB_ENV
+        path: bin
 
     - name: Upload Firmware To Artifact
       if: steps.compile.outputs.status == 'success' && env.FIRMWARE_RELEASE != 'true'
